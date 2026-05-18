@@ -1,0 +1,96 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.frontend
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/torpedo-frontend:latest
+
+      - name: Build & push bot
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.bot
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/torpedo-bot:latest
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /opt/torpedo-cards
+            cd /opt/torpedo-cards
+
+            # Write Caddyfile if not exists
+            if [ ! -f Caddyfile ]; then
+              echo '{$DOMAIN} { reverse_proxy frontend:80 }' > Caddyfile
+            fi
+
+            # Write docker-compose.yml
+            cat > docker-compose.yml << 'COMPOSE'
+            services:
+              frontend:
+                image: ghcr.io/${{ github.repository_owner }}/torpedo-frontend:latest
+                restart: unless-stopped
+
+              bot:
+                image: ghcr.io/${{ github.repository_owner }}/torpedo-bot:latest
+                restart: unless-stopped
+                environment:
+                  BOT_TOKEN: ${BOT_TOKEN}
+                  WEBAPP_URL: https://${DOMAIN}
+
+              caddy:
+                image: caddy:alpine
+                restart: unless-stopped
+                ports:
+                  - "80:80"
+                  - "443:443"
+                  - "443:443/udp"
+                volumes:
+                  - ./Caddyfile:/etc/caddy/Caddyfile:ro
+                  - caddy_data:/data
+                  - caddy_config:/config
+                environment:
+                  DOMAIN: ${DOMAIN}
+
+            volumes:
+              caddy_data:
+              caddy_config:
+            COMPOSE
+
+            # Write .env (only if not exists to preserve secrets)
+            if [ ! -f .env ]; then
+              echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+              echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
+            fi
+
+            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            docker compose pull
+            docker compose up -d
