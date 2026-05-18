@@ -2,7 +2,7 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 jobs:
   build-and-deploy:
@@ -27,7 +27,7 @@ jobs:
           context: .
           file: Dockerfile.frontend
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/torpedo-frontend:latest
+          tags: ghcr.io/ollegsey/torpedo-frontend:latest
 
       - name: Build & push bot
         uses: docker/build-push-action@v5
@@ -35,7 +35,7 @@ jobs:
           context: .
           file: Dockerfile.bot
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/torpedo-bot:latest
+          tags: ghcr.io/ollegsey/torpedo-bot:latest
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1
@@ -43,24 +43,25 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
             mkdir -p /opt/torpedo-cards
             cd /opt/torpedo-cards
 
-            # Write Caddyfile if not exists
-            if [ ! -f Caddyfile ]; then
-              echo '{$DOMAIN} { reverse_proxy frontend:80 }' > Caddyfile
-            fi
+            cat > Caddyfile << 'EOF'
+            {$DOMAIN} {
+                reverse_proxy frontend:80
+            }
+            EOF
 
-            # Write docker-compose.yml
-            cat > docker-compose.yml << 'COMPOSE'
+            cat > docker-compose.yml << 'EOF'
             services:
               frontend:
-                image: ghcr.io/${{ github.repository_owner }}/torpedo-frontend:latest
+                image: ghcr.io/ollegsey/torpedo-frontend:latest
                 restart: unless-stopped
 
               bot:
-                image: ghcr.io/${{ github.repository_owner }}/torpedo-bot:latest
+                image: ghcr.io/ollegsey/torpedo-bot:latest
                 restart: unless-stopped
                 environment:
                   BOT_TOKEN: ${BOT_TOKEN}
@@ -83,14 +84,13 @@ jobs:
             volumes:
               caddy_data:
               caddy_config:
-            COMPOSE
+            EOF
 
-            # Write .env (only if not exists to preserve secrets)
-            if [ ! -f .env ]; then
-              echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
-              echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
-            fi
+            cat > .env << 'EOF'
+            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+            DOMAIN=${{ secrets.DOMAIN }}
+            EOF
 
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+            docker login ghcr.io -u ollegsey -p ${{ secrets.GITHUB_TOKEN }}
             docker compose pull
-            docker compose up -d
+            docker compose up -d --remove-orphans
