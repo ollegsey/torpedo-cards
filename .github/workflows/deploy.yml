@@ -45,8 +45,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            mkdir -p /opt/torpedo-cards
-            cd /opt/torpedo-cards
+            mkdir -p ~/torpedo-cards
+            cd ~/torpedo-cards
 
             cat > Caddyfile << 'EOF'
             {$DOMAIN} {
@@ -92,5 +92,6 @@ jobs:
             EOF
 
             docker login ghcr.io -u ollegsey -p ${{ secrets.GITHUB_TOKEN }}
+            docker compose down 2>/dev/null || true
             docker compose pull
             docker compose up -d --remove-orphans
